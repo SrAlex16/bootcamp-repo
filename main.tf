@@ -179,7 +179,7 @@ resource "aws_lb" "external_lb" {
   security_groups    = [aws_security_group.alb_external.id]
   subnets            = [aws_subnet.public_a.id, aws_subnet.public_b.id]
 
-  enable_deletion_protection = false  # Puedes activarlo si lo necesitas
+  enable_deletion_protection = false
 
   tags = {
     Name = "app-external-lb"
@@ -204,7 +204,7 @@ resource "aws_route53_record" "app_record" {
   type    = "A"
   alias {
     name                   = aws_lb.external_lb.dns_name
-    zone_id                = aws_lb.external_lb.zone_id  # Correcto
+    zone_id                = aws_lb.external_lb.zone_id
     evaluate_target_health = true
   }
 }
@@ -282,24 +282,50 @@ resource "aws_efs_mount_target" "private_b" {
 // Instancias EC2 con Apache
 resource "aws_launch_template" "web" {
   name          = "web-app-template"
-  image_id      = "ami-06b21ccaeff8cd686" // Verifica que esta AMI esté disponible o selecciona otra
+  image_id      = "ami-04e0020a747461148"
   instance_type = "t2.micro"
-  key_name      = "clave" // Reemplaza con tu nombre de clave
+  key_name      = "clave"
 
+  user_data = base64encode(<<EOF
+#!/bin/bash
+sudo su
+yum update -y
+
+# Instalar PHP y sus extensiones necesarias
+yum install -y php php-mysqlnd php-xml php-gd php-mbstring php-intl php-zip php-json
+
+# Instalar Apache
+yum install -y httpd
+
+# Iniciar el servicio de Apache
+systemctl start httpd
+
+# Habilitar Apache para que inicie al arrancar el sistema
+systemctl enable httpd
+
+# Reiniciar Apache para asegurar que todos los servicios estén funcionando
+systemctl restart httpd
+EOF
+)
+
+  # Configurar interfaces de red
   network_interfaces {
     security_groups = [aws_security_group.web.id]
   }
 
+  # Asignación del perfil de IAM
   iam_instance_profile {
-    name = aws_iam_instance_profile.ssm_instance_profile.name // Asignar el perfil de instancia SSM
+    name = aws_iam_instance_profile.ssm_instance_profile.name
   }
 
-  tags = { 
+  # Tags para identificación
+  tags = {
     Name = "vpc-lab4"
-    Dev = "Alejandro"
-    Env = "Lab4"
+    Dev  = "Alejandro"
+    Env  = "Lab4"
   }
 }
+
 
 // Auto Scaling Group
 resource "aws_autoscaling_group" "web_asg" {
@@ -308,9 +334,9 @@ resource "aws_autoscaling_group" "web_asg" {
     version = "$Latest"
   }
 
-  min_size            = 1
-  max_size            = 1
-  desired_capacity    = 1
+  min_size            = 2
+  max_size            = 3
+  desired_capacity    = 2
   vpc_zone_identifier = [aws_subnet.private_a.id, aws_subnet.private_b.id]
 
    target_group_arns = [
@@ -342,7 +368,7 @@ resource "aws_autoscaling_policy" "scale_in" {
 
 // Secrets Manager para gestionar secretos
 resource "aws_secretsmanager_secret" "db_password" {
-  name = "dbPasswordLab4_Secret_39"
+  name = "dbPasswordLab4_Secret_45"
 
   tags = { 
     Name = "vpc-lab4"
@@ -375,7 +401,7 @@ resource "aws_cloudfront_distribution" "cdn" {
 
   enabled             = true
   is_ipv6_enabled     = true
-  default_root_object = "index.html" // Cambia esto según lo que desees como entrada predeterminada.
+  default_root_object = "index.html"
 
   default_cache_behavior {
     target_origin_id = "app-origin"
@@ -405,7 +431,10 @@ resource "aws_cloudfront_distribution" "cdn" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true // Usa el certificado predeterminado de CloudFront
+    //cloudfront_default_certificate = true // Usa el certificado predeterminado de CloudFront
+    acm_certificate_arn            = aws_acm_certificate.Certificado_web.arn
+    ssl_support_method             = "sni-only"
+    minimum_protocol_version        = "TLSv1.2_2018"
   }
 
   tags = {
@@ -556,7 +585,7 @@ resource "aws_security_group" "web" {
 resource "aws_security_group" "db" {
   name        = "db-security-group"
   description = "Security group for RDS database"
-  vpc_id      = aws_vpc.main.id  # Referencia a la VPC que ya has creado
+  vpc_id      = aws_vpc.main.id  # Referencia a la VPC principal
 
   ingress {
     from_port   = 5432  # Puerto por defecto para PostgreSQL
@@ -664,7 +693,7 @@ resource "aws_lb_listener" "internal_http" {
 //VPC Peering
 //1. crear vpc de backup
 resource "aws_vpc" "backup" {
-  cidr_block           = "10.1.0.0/16"  // Asignar un rango CIDR diferente al de la VPC de producción
+  cidr_block           = "10.1.0.0/16"
   enable_dns_support   = true
   enable_dns_hostnames = true
 
